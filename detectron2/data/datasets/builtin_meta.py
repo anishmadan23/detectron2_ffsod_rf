@@ -297,8 +297,20 @@ def _get_coco_panoptic_separated_meta():
     return ret
 
 
-def _get_builtin_metadata(dataset_name):
-    if dataset_name == "coco" or dataset_name=="coco_fsdet_pretraining" or dataset_name == "coco_fsod":
+def _get_builtin_metadata(dataset_name, dataset_type=None, categories=None, class_image_count=None):
+    if dataset_type=='rf':
+        assert(categories is not None), "Categories must be provided for rf datasets"
+        assert(class_image_count is not None), "class_image_count must be provided for rf datasets"
+
+        id_to_name = {x['id']: x['name'] for x in categories}
+        thing_dataset_id_to_contiguous_id = {i: i for i in range(len(categories))}
+        thing_classes = [id_to_name[k] for k in sorted(id_to_name)]
+        return {
+            "thing_dataset_id_to_contiguous_id": thing_dataset_id_to_contiguous_id,
+            "thing_classes": thing_classes,
+            "class_image_count": class_image_count}
+
+    elif dataset_name == "coco" or dataset_name=="coco_fsdet_pretraining" or dataset_name == "coco_fsod":
         return _get_coco_instances_meta()
     elif dataset_name == "coco_fsdet_pretraining_base":
         return _get_coco_instances_meta_base_only()

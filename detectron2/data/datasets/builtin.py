@@ -18,9 +18,10 @@ To add new dataset, refer to the tutorial "docs/DATASETS.md".
 """
 
 import os
+import json
 import numpy as np 
 from detectron2.data import DatasetCatalog, MetadataCatalog
-
+from pathlib import Path
 from .builtin_meta import ADE20K_SEM_SEG_CATEGORIES, _get_builtin_metadata
 from .cityscapes import load_cityscapes_instances, load_cityscapes_semantic
 from .cityscapes_panoptic import register_all_cityscapes_panoptic
@@ -28,12 +29,12 @@ from .coco import load_sem_seg, register_coco_instances
 from .coco_panoptic import register_coco_panoptic, register_coco_panoptic_separated
 from .lvis import get_lvis_instances_meta, register_lvis_instances
 from .pascal_voc import register_pascal_voc
+import csv
+from copy import deepcopy
 
-
-
-
-
-
+# ============== Splits for Roboflow Datasets ==================
+root_dir_rf = '/home/anishmad/msr_thesis/rf_fsod/'
+_PREDEFINED_SPLITS_RF_FSOD = {}
 
 # ==== Predefined datasets and splits for COCO ==========
 
@@ -101,6 +102,7 @@ def get_fiod_split_dict(shots, seeds):
                 dd[dd_key] = value
     return dd
 
+
 _PREDEFINED_SPLITS_NUIMAGES_FSOD["nuimages_fsod"] = get_fsod_split_dict(fsod_shots, fsod_seeds)   #using same shots and seeds as FSOD
 _PREDEFINED_SPLITS_NUIMAGES_FSOD["nuimages_fiod"] = get_fiod_split_dict(fsod_shots, fsod_seeds)   #using same shots and seeds as FSOD
 
@@ -130,7 +132,6 @@ _PREDEFINED_SPLITS_NUSCENES["nuscenes_all_cls"] = {
     "nuscenes_all_cls_val": ("/home/anishmad/msr_thesis/glip/DATASET/nuscenes/images", "/home/anishmad/msr_thesis/glip/DATASET/nuscenes/annotations/nuscenes_infos_val_mono3d.coco.json"),
     "nuscenes_all_cls_dummy": ("/home/anishmad/msr_thesis/glip/DATASET/nuscenes/images", "/home/anishmad/msr_thesis/glip/DATASET/nuscenes/annotations/nuscenes_infos_dummy_val_mono3d.coco.json"),
 }
-
 
 
 def register_all_coco(root):
@@ -181,6 +182,103 @@ def register_all_nuscenes(root):
                 offset_in_category=0,           # due to modified annotations
             )
 
+def get_rf_fsod_splits(root, dataset_name, seeds=['best'], shots=[10], modes=['train', 'valid', 'test']):
+    dd = {}
+    updated_dataset_name = dataset_name.replace("-", "_")
+    for seed in seeds:
+        for shot in shots:
+            # for mode in ['train', 'val']:
+            for mode in modes:
+                if seed == 'best':
+                    dd_key = f'{updated_dataset_name}_{mode}_best_split_shots_{shot}'
+                    value = (f"{root}/data/{dataset_name}/{mode}", f"{root}/gen_data/{dataset_name}/fsod_data_dectectron/{mode}/{dataset_name}_fsod_{mode}_best_split_shots_{shot}.json")
+                else:
+                    dd_key = f'{updated_dataset_name}_{mode}_seed_{seed}_shots_{shot}'
+                    value = (f"{root}/data/{dataset_name}/{mode}", f"{root}/gen_data/{dataset_name}/fsod_data_dectectron/{mode}/{dataset_name}_fsod_{mode}_seed_{seed}_shots_{shot}.json")
+
+                dd[dd_key] = value
+    return dd
+
+def get_clean_ann_data(data_ann_file):
+        
+        """
+        Get clean annotation data: Removes class 0 that is added by default to Roboflow datasets and shifts annotation ids by 1
+        """
+        data_ann = json.load(open(data_ann_file, 'r'))
+        new_data_ann = {}
+        if data_ann['info']:
+            new_data_ann['info'] = data_ann['info']
+        if data_ann['licenses']:
+            new_data_ann['licenses'] = data_ann['licenses']
+
+        # confirm if category 0 is none
+        assert(data_ann['categories'][0]['supercategory']=='none'), "Need to change logic for removing category 0 from dataset in preprocessing"
+
+        # data_ann['categories'] = [cat for cat in data_ann['categories'] if cat['id']!=0]
+        new_data_ann['categories'] = [{'id': cat['id']-1, 'name': cat['name'], 'supercategory': cat['supercategory']} for cat in data_ann['categories'] if cat['id']!=0]
+
+        new_data_ann['images'] = data_ann['images']
+        new_data_ann['annotations'] = deepcopy(data_ann['annotations'])
+
+        for ann in new_data_ann['annotations']:
+            ann['category_id'] = ann['category_id']-1
+
+        ID2CLASS = {}
+        for cat_info in new_data_ann['categories']:
+            ID2CLASS[cat_info['id']] = cat_info['name']
+
+        return new_data_ann, ID2CLASS
+
+def get_rf_cat_info(anno_data):
+
+    categories = anno_data['categories']
+    category_list = deepcopy(categories)
+
+    image_count = {x['id']: set() for x in category_list}
+    ann_count = {x['id']: 0 for x in category_list}
+
+    for x in anno_data['annotations']:
+        image_count[x['category_id']].add(x['image_id'])
+        ann_count[x['category_id']] += 1
+    
+    for x in category_list:
+        x['image_count'] = len(image_count[x['id']])
+        x['instance_count'] = [x['id']]
+
+    return categories, category_list
+
+
+def register_all_roboflow_datasets(root):
+    base_data_dir = Path(root)
+    datasets_links_filepath = base_data_dir / 'datasets_links.csv'
+    assert datasets_links_filepath.exists(), f"File not found: {datasets_links_filepath}"
+    links = []
+    with open(datasets_links_filepath, "r") as f:
+        reader = csv.reader(f)
+        for row in reader:
+            url = row[1]
+            links.append(url)
+
+    links = links[1:]
+    for link in links:
+        dataset_name = link.split("/")[-3]
+        updated_dataset_name = dataset_name.replace("-", "_")
+        _PREDEFINED_SPLITS_RF_FSOD[updated_dataset_name] = get_rf_fsod_splits(base_data_dir, dataset_name, modes=['train', 'valid', 'test'])
+
+        clean_annos, _ = get_clean_ann_data(base_data_dir / 'data' / {dataset_name} / 'train' / '_annotations.coco.json')
+        categories, cat_img_count_list = get_rf_cat_info(clean_annos)
+
+    for dataset_name, splits_per_dataset in _PREDEFINED_SPLITS_RF_FSOD.items():
+        for key, (image_root, json_file) in splits_per_dataset.items():
+            # Assume pre-defined datasets live in `./datasets`.
+            register_coco_instances(
+                key,
+                _get_builtin_metadata(dataset_name, dataset_type='rf', categories=categories, class_image_count = cat_img_count_list),
+                json_file,   # using absolute paths
+                image_root,   # using absolute paths
+                offset_in_category=0,           # due to modified annotations
+            )
+        
 # ==== Predefined datasets and splits for LVIS ==========
 
 _PREDEFINED_SPLITS_LVIS = {
@@ -241,23 +339,6 @@ _PREDEFINED_SPLITS_LVIS = {
 
     },
 
-    # "lvis_v1_fsod": {
-    #     "lvis_v1_fsod_train_novel": ("/home/anishmad/msr_thesis/glip/DATASET/coco/", "/home/anishmad/msr_thesis/detic-lt3d/data/datasets/lvis/fsod/split/lvis_train_novel_shots.json"),
-    #     "lvis_v1_fsod_val_novel": ("/home/anishmad/msr_thesis/glip/DATASET/coco/", "/home/anishmad/msr_thesis/detic-lt3d/data/datasets/lvis/fsod/split/lvis_val_novel_shots.json"),
-    #     "lvis_v1_fsod_test": ("/home/anishmad/msr_thesis/glip/DATASET/coco/", "/home/anishmad/msr_thesis/detic-lt3d/data/datasets/lvis/fsod/lvis_v1_test_novel.json"),
-       
-    # },
-    # "lvis_v1_rare":{
-    #     "lvis_v1_train_novel_rare_cats": ("/home/anishmad/msr_thesis/glip/DATASET/coco/", "/home/anishmad/msr_thesis/detic-lt3d/data/datasets/lvis/fsod/split/only_rare/lvis_train_novel_shots.json"),
-    #     "lvis_v1_val_novel_rare_cats": ("/home/anishmad/msr_thesis/glip/DATASET/coco/", "/home/anishmad/msr_thesis/detic-lt3d/data/datasets/lvis/fsod/split/only_rare/lvis_val_novel_shots.json")
-
-    # },
-
-    # "lvis_v1_fsod_rare":{
-    #     "lvis_v1_fsod_train_novel_rare_cats": ("/home/anishmad/msr_thesis/glip/DATASET/coco/", "/home/anishmad/msr_thesis/detic-lt3d/data/datasets/lvis/fsod/split/only_rare/lvis_train_novel_shots.json"),
-    #     "lvis_v1_fsod_val_novel_rare_cats": ("/home/anishmad/msr_thesis/glip/DATASET/coco/", "/home/anishmad/msr_thesis/detic-lt3d/data/datasets/lvis/fsod/split/only_rare/lvis_val_novel_shots.json")
-
-    # },
     "lvis_v0.5": {
         "lvis_v0.5_train": ("coco/", "lvis/lvis_v0.5_train.json"),
         "lvis_v0.5_val": ("coco/", "lvis/lvis_v0.5_val.json"),
@@ -367,4 +448,5 @@ if __name__.endswith(".builtin"):
     register_all_ade20k(_root)
     register_all_nuimages(_root)
     register_all_nuscenes(_root)
-    register_all_nuimages_fsod(_root)
+    register_all_nuimages_fsod(root_dir_rf)
+    
