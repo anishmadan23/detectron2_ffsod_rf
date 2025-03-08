@@ -31,9 +31,10 @@ from .lvis import get_lvis_instances_meta, register_lvis_instances
 from .pascal_voc import register_pascal_voc
 import csv
 from copy import deepcopy
+from .utils import *
 
 # ============== Splits for Roboflow Datasets ==================
-root_dir_rf = '/home/anishmad/msr_thesis/rf_fsod/'
+root_dir_rf = '/home/anishmad/msr_thesis/rf_fsod_baselines/'
 _PREDEFINED_SPLITS_RF_FSOD = {}
 
 # ==== Predefined datasets and splits for COCO ==========
@@ -187,65 +188,16 @@ def get_rf_fsod_splits(root, dataset_name, seeds=['best'], shots=[10], modes=['t
     updated_dataset_name = dataset_name.replace("-", "_")
     for seed in seeds:
         for shot in shots:
-            # for mode in ['train', 'val']:
             for mode in modes:
                 if seed == 'best':
                     dd_key = f'{updated_dataset_name}_{mode}_best_split_shots_{shot}'
-                    value = (f"{root}/data/{dataset_name}/{mode}", f"{root}/gen_data/{dataset_name}/fsod_data_dectectron/{mode}/{dataset_name}_fsod_{mode}_best_split_shots_{shot}.json")
+                    value = (f"{root}/data/{dataset_name}/{mode}", f"{root}/gen_data/{dataset_name}/fsod_data_detectron/{mode}/{dataset_name}_fsod_{mode}_best_split_shots_{shot}.json")
                 else:
                     dd_key = f'{updated_dataset_name}_{mode}_seed_{seed}_shots_{shot}'
-                    value = (f"{root}/data/{dataset_name}/{mode}", f"{root}/gen_data/{dataset_name}/fsod_data_dectectron/{mode}/{dataset_name}_fsod_{mode}_seed_{seed}_shots_{shot}.json")
+                    value = (f"{root}/data/{dataset_name}/{mode}", f"{root}/gen_data/{dataset_name}/fsod_data_detectron/{mode}/{dataset_name}_fsod_{mode}_seed_{seed}_shots_{shot}.json")
 
                 dd[dd_key] = value
     return dd
-
-def get_clean_ann_data(data_ann_file):
-        
-        """
-        Get clean annotation data: Removes class 0 that is added by default to Roboflow datasets and shifts annotation ids by 1
-        """
-        data_ann = json.load(open(data_ann_file, 'r'))
-        new_data_ann = {}
-        if data_ann['info']:
-            new_data_ann['info'] = data_ann['info']
-        if data_ann['licenses']:
-            new_data_ann['licenses'] = data_ann['licenses']
-
-        # confirm if category 0 is none
-        assert(data_ann['categories'][0]['supercategory']=='none'), "Need to change logic for removing category 0 from dataset in preprocessing"
-
-        # data_ann['categories'] = [cat for cat in data_ann['categories'] if cat['id']!=0]
-        new_data_ann['categories'] = [{'id': cat['id']-1, 'name': cat['name'], 'supercategory': cat['supercategory']} for cat in data_ann['categories'] if cat['id']!=0]
-
-        new_data_ann['images'] = data_ann['images']
-        new_data_ann['annotations'] = deepcopy(data_ann['annotations'])
-
-        for ann in new_data_ann['annotations']:
-            ann['category_id'] = ann['category_id']-1
-
-        ID2CLASS = {}
-        for cat_info in new_data_ann['categories']:
-            ID2CLASS[cat_info['id']] = cat_info['name']
-
-        return new_data_ann, ID2CLASS
-
-def get_rf_cat_info(anno_data):
-
-    categories = anno_data['categories']
-    category_list = deepcopy(categories)
-
-    image_count = {x['id']: set() for x in category_list}
-    ann_count = {x['id']: 0 for x in category_list}
-
-    for x in anno_data['annotations']:
-        image_count[x['category_id']].add(x['image_id'])
-        ann_count[x['category_id']] += 1
-    
-    for x in category_list:
-        x['image_count'] = len(image_count[x['id']])
-        x['instance_count'] = [x['id']]
-
-    return categories, category_list
 
 
 def register_all_roboflow_datasets(root):
@@ -256,21 +208,26 @@ def register_all_roboflow_datasets(root):
     with open(datasets_links_filepath, "r") as f:
         reader = csv.reader(f)
         for row in reader:
-            url = row[1]
+            url = row[0]
             links.append(url)
 
     links = links[1:]
     for link in links:
-        dataset_name = link.split("/")[-3]
-        updated_dataset_name = dataset_name.replace("-", "_")
-        _PREDEFINED_SPLITS_RF_FSOD[updated_dataset_name] = get_rf_fsod_splits(base_data_dir, dataset_name, modes=['train', 'valid', 'test'])
-
-        clean_annos, _ = get_clean_ann_data(base_data_dir / 'data' / {dataset_name} / 'train' / '_annotations.coco.json')
-        categories, cat_img_count_list = get_rf_cat_info(clean_annos)
+        dataset_name = link.split("/")[-2]
+        # updated_dataset_name = dataset_name.replace("-", "_")
+        _PREDEFINED_SPLITS_RF_FSOD[dataset_name] = get_rf_fsod_splits(base_data_dir, dataset_name, modes=['train', 'valid', 'test'])
+        
+        # print(categories, cat_img_count_list)
 
     for dataset_name, splits_per_dataset in _PREDEFINED_SPLITS_RF_FSOD.items():
         for key, (image_root, json_file) in splits_per_dataset.items():
+            # updated_dataset_name = dataset_name.replace("-", "_")
+            clean_annos, _ = get_clean_ann_data(base_data_dir / 'data' / dataset_name / 'train' / '_annotations.coco.json')
+            categories, cat_img_count_list = get_rf_cat_info(clean_annos)
             # Assume pre-defined datasets live in `./datasets`.
+            # import ipdb; ipdb.set_trace()
+            # print(key)
+            # DatasetCatalog.remove(key)
             register_coco_instances(
                 key,
                 _get_builtin_metadata(dataset_name, dataset_type='rf', categories=categories, class_image_count = cat_img_count_list),
@@ -448,5 +405,6 @@ if __name__.endswith(".builtin"):
     register_all_ade20k(_root)
     register_all_nuimages(_root)
     register_all_nuscenes(_root)
-    register_all_nuimages_fsod(root_dir_rf)
+    register_all_nuimages_fsod(_root)
+    register_all_roboflow_datasets(root_dir_rf)
     

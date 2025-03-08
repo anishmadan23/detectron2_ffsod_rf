@@ -34,6 +34,8 @@ class _DatasetCatalog(UserDict):
                 It must return the same results if called multiple times.
         """
         assert callable(func), "You must register a function with `DatasetCatalog.register`!"
+        # if 'arg_' in name:
+        #     import ipdb; ipdb.set_trace()
         assert name not in self, "Dataset '{}' is already registered!".format(name)
         self[name] = func
 

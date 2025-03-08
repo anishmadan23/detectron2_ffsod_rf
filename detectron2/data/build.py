@@ -363,6 +363,7 @@ def build_batch_data_loader(
         total_batch_size, world_size
     )
     batch_size = total_batch_size // world_size
+    # import ipdb; ipdb.set_trace()
     if isinstance(dataset, torchdata.IterableDataset):
         assert sampler is None, "sampler must be None if dataset is IterableDataset"
     else:
@@ -502,7 +503,9 @@ def build_detection_train_loader(
 
 def _val_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
     if dataset is None:
-        val_data = tuple([x.replace("train", "val") for x in cfg.DATASETS.TRAIN])
+        # val_data = tuple([x.replace("train", "val") for x in cfg.DATASETS.TRAIN])
+        val_data = tuple([x.replace("train", "valid") for x in cfg.DATASETS.TRAIN]) # changed for roboflow datasets
+
         dataset = get_detection_dataset_dicts(
             # cfg.DATASETS.TRAIN,
             val_data,
